@@ -281,3 +281,114 @@ if we cannot recvuntil(stuck) try to send it without recvuntil
 to check value of pie and libc base, gdb.attach(r) then vmmap then continue
 
 knowing got value of address , x/x address.
+
+see stack layout IDA = windows->stack of game
+-00000210 var_210         dq 64 dup(?)
+-00000010                 db ? ; undefined
+-0000000F                 db ? ; undefined
+-0000000E                 db ? ; undefined
+-0000000D                 db ? ; undefined
+-0000000C var_C           dd ?
+-00000008                 db ? ; undefined
+-00000007                 db ? ; undefined
+-00000006                 db ? ; undefined
+-00000005                 db ? ; undefined
+-00000004                 db ? ; undefined
+-00000003                 db ? ; undefined
+-00000002                 db ? ; undefined
+-00000001                 db ? ; undefined
++00000000  s              db 4 dup(?)
++00000004  r              db 4 dup(?)
+
+ebp after var_210 64 value + 16 byte
+
+p/f 0x0804900a00000000 -> convert to float
+doubles -> 8 byte. last 4 bytes stored first
+canary -> to find canary
+
+*len += &GLOBAL_OFFSET_TABLE_ - 134529023; // *len += 1
+    
+11-index/csaw18_doubletrouble
+increment the length with value > -10 , then send value -10 > x > -100 to stop the increment and save the length that incremented. send junk then send shellcode , because there is sorted value we need to bypass the canary by providing right value that make it fit ( trial ).  
+sorted ( descending ) value in float , 0xff > 0x00 , so the value in $ebp-0xn+1 must be greater than $ebp-0xn.
+[*] find the best way to make the canary fit.
+
+ret -> This is beneftitial to us, since all it will do is just continue to the next address and execute it, which will be the last 4 bytes of the next double
+
+online x86/x64 decompiler/compiler 
+https://defuse.ca/online-x86-assembler.htm
+
+hex 8 byte to float = target.sendline("%.19g" % struct.unpack("<d", p64(ret)))
+
+def pdouble(f):
+    return struct.pack('<d', f)
+
+def double_to_hex(f):
+    return hex(struct.unpack('<Q', struct.pack('<d', f))[0])
+
+def int_to_double(i):
+    return struct.unpack('<d', p64(i))[0]
+
+def hex_to_double(h):
+    return struct.unpack('<d', h.decode("hex")[::-1])[0]
+    
+heartbleed
+input more data to leak another data
+flag in 0x6B7540
+our input in 0x6B7340
+so we need 0x6B7540-0x6B7340 = 0x200 = 512 byte to leak the flag
+globals[v9] = 0; // we need to make v9 = 512 + x , to make it load all data
+puts print start address until null byte
+
+atof , we can use nan to bypass check greater than ,lower than, or equal
+
+malloc return heap pointer	
+
+variable HEAP_PTRS in bss adjacent with SIZES
+read
+ __isoc99_scanf("%d", &v1);
+  if ( v1 <= INDEX )
+  {
+    v2 = HEAP_PTRS[v1];
+    printf("%s", v2);
+  }
+
+add
+__isoc99_scanf("%d", &v1);
+buf = malloc(v1);
+read(0, buf, v1);
+HEAP_PTRS[INDEX] = (__int64)buf;
+SIZES[INDEX++] = v1;
+
+edit
+__isoc99_scanf("%d", &v1)
+buf = (void *)HEAP_PTRS[v1];
+v2 = SIZES[v1];
+read(0, buf, v2);
+*((_BYTE *)buf + v2) = 0;
+
+we can use read function to leak libc , becuase index can < 0 
+__int64 HEAP_PTRS[8] -> 0x6020A0
+__int SIZE -> 0x6020E0
+so we can overlap HEAP_PTRS with SIZES , example
+HEAP_PTRS[18] = 0x602130
+SIZE[20] = 0x602130
+so we need to write 20 values , then 20th write we need to make size[20] = got address , and size[21] = 0x0. 
+Then we edit HEAP_PTRS[18] which is equal SIZE[21]+SIZE[20] , we change the value of GOT address to one_gadget or something
+
+leak libc
+because the read function read HEAP_PTRS[v1] , which is HEAP_PTRS value is pointer , so we need to find reference to GOT address (jmprel) .
+heap_ptrs[0] = address_index->address_heap->heap_value // original
+heap_ptrs[offset] = address_index->address_got->got_value // target
+
+knowing jmp address
+$var = p puts
+$var2 = search-pattern $var // got address
+search-pattern $var2 // jmp address / address_index that save address_got
+
+address_index = 0x400538
+( 0x400538 - 0x6020A0 )/ 8 = -263021
+
+fail run system swampctf19_dreamheaps but successfully exploited , try another solution
+
+we can overwrite free got , then do delete on index that save /bin/sh
